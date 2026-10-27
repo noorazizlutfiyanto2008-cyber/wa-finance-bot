@@ -3,6 +3,7 @@ const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 const express = require('express');
+const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
 
 // Inisialisasi Gemini API menggunakan Environment Variable
@@ -22,11 +23,35 @@ app.listen(PORT, () => {
     console.log(`🚀 Web server jalan di port ${PORT}`);
 });
 
-// Database sementara (Memory Storage) per pengguna
-const userDB = {};
+// ==========================================
+// 2. DATABASE PERMANEN (JSON FILE STORAGE)
+// ==========================================
+const DB_FILE = './database.json';
+
+function loadDB() {
+    try {
+        if (fs.existsSync(DB_FILE)) {
+            const data = fs.readFileSync(DB_FILE, 'utf8');
+            return JSON.parse(data);
+        }
+    } catch (error) {
+        console.error('⚠️ Gagal membaca database:', error);
+    }
+    return {};
+}
+
+function saveDB(data) {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (error) {
+        console.error('⚠️ Gagal menyimpan database:', error);
+    }
+}
+
+let userDB = loadDB();
 
 // ==========================================
-// 2. SETUP WHATSAPP SOCKET (BAILEYS)
+// 3. SETUP WHATSAPP SOCKET (BAILEYS)
 // ==========================================
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -56,7 +81,7 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     // ==========================================
-    // 3. LOGIKA UTAMA & FITUR LENGKAP KEUANGAN
+    // 4. LOGIKA UTAMA & FITUR LENGKAP KEUANGAN
     // ==========================================
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
@@ -113,6 +138,7 @@ async function startBot() {
             const tanggal = new Date().toLocaleDateString('id-ID');
 
             db.incomes.push({ nominal, keterangan, tanggal });
+            saveDB(userDB); // Simpan permanen ke file JSON
 
             const newTotalInc = db.incomes.reduce((acc, curr) => acc + curr.nominal, 0);
             const newSaldo = newTotalInc - totalPengeluaran;
@@ -189,6 +215,7 @@ async function startBot() {
 
             const tanggal = new Date().toLocaleDateString('id-ID');
             db.transactions.push({ nominal, keterangan, tanggal });
+            saveDB(userDB); // Simpan permanen ke file JSON
 
             const sisaSaldoAft = saldoSaatIni - nominal;
 
@@ -265,6 +292,8 @@ async function startBot() {
                 return;
             }
             const removed = db.transactions.pop();
+            saveDB(userDB); // Simpan perubahan permanen
+
             await sock.sendMessage(from, { 
                 text: `↩️ *Pengeluaran Terakhir Dihapus (Undo):*\n` +
                       `💸 Rp ${removed.nominal.toLocaleString('id-ID')} - ${removed.keterangan}`
@@ -272,7 +301,7 @@ async function startBot() {
         }
 
         // 9. REKAPITULASI (.rekap / .report)
-        else if (cleanText === '.rekap' || cleanText === '.report') {
+        else if (cleanText === '.rekap' || cleanTest === '.report') {
             await sock.sendMessage(from, { 
                 text: `📊 *REKAPITULASI KEUANGAN AZIZZ*\n\n` +
                       `🟢 Total Pemasukan: Rp ${totalPemasukan.toLocaleString('id-ID')}\n` +
@@ -286,6 +315,8 @@ async function startBot() {
         else if (cleanText === '.reset') {
             db.transactions = [];
             db.incomes = [];
+            saveDB(userDB); // Simpan status kosong permanen
+
             await sock.sendMessage(from, { text: `🧹 *Data Berhasil Direset, azizz!* Semua saldo dan riwayat kembali ke nol.` });
         }
 
@@ -346,6 +377,7 @@ async function startBot() {
                 if (nominal > 0) {
                     const tanggal = new Date().toLocaleDateString('id-ID');
                     db.transactions.push({ nominal, keterangan, tanggal });
+                    saveDB(userDB); // Simpan permanen ke file JSON
 
                     await sock.sendMessage(from, {
                         text: `✅ *Struk Berhasil Dibaca AI (Masuk Pengeluaran)*:\n\n` +
