@@ -88,7 +88,7 @@ async function startBot() {
                       `Halo *azizz*! Siap membantu mengontrol keuanganmu agar lebih terarah ✨\n\n` +
                       `📋 *Daftar Perintah:*\n` +
                       `• ➕ \`.rc [jumlah] [keterangan]\` - Tambah saldo / pemasukan\n` +
-                      `• 📝 \`.catat [jumlah] [keterangan]\` - Catat pengeluaran\n` +
+                      `• 📝 \`.catat [keterangan] [jumlah]\` - Catat pengeluaran\n` +
                       `• 🎯 \`.budget\` - Hitung otomatis alokasi 5 pos keuangan\n` +
                       `• 💰 \`.saldo\` - Cek sisa saldo & total alokasi\n` +
                       `• 📜 \`.history\` - Lihat riwayat transaksi terakhir\n` +
@@ -149,7 +149,7 @@ async function startBot() {
                       `🛍️ *Biaya Hidup (30%)*: Rp ${biayaHidup.toLocaleString('id-ID')}\n` +
                       `   └ Operasional, mandi, facewash, deodoran, dll.\n\n` +
                       `🏦 *Tabungan (25%)*: Rp ${tabungan.toLocaleString('id-ID')}\n` +
-                      `   └ Fleksibel/Buffer jika jatan lain habis (wajib catat).\n\n` +
+                      `   └ Fleksibel/Buffer jika pos lain habis (wajib catat).\n\n` +
                       `📈 *Investasi (25%)*: Rp ${investasi.toLocaleString('id-ID')}\n` +
                       `   └ 🔒 *LOCKED (Haram Disentuh)* untuk aset masa depan.\n\n` +
                       `🆘 *Uang Darurat (10%)*: Rp ${uangDarurat.toLocaleString('id-ID')}\n` +
@@ -170,26 +170,32 @@ async function startBot() {
             });
         }
 
-        // 5. CATAT PENGELUARAN (.catat 50000 sabun mandi)
+        // 5. CATAT PENGELUARAN (.catat sabun mandi 50000)
         else if (cleanText.startsWith('.catat')) {
             const args = cleanText.split(' ');
-            if (args.length < 3 || isNaN(args[1])) {
-                await sock.sendMessage(from, { text: '⚠️ Format salah, azizz! Contoh:\n`.catat 50000 sabun mandi`' });
+            if (args.length < 3) {
+                await sock.sendMessage(from, { text: '⚠️ Format salah, azizz! Contoh:\n`.catat sabun mandi 50000`' });
                 return;
             }
 
-            const nominal = Number(args[1]);
-            const keterangan = args.slice(2).join(' ');
-            const tanggal = new Date().toLocaleDateString('id-ID');
+            const nominalStr = args[args.length - 1];
+            const nominal = Number(nominalStr);
+            const keterangan = args.slice(1, args.length - 1).join(' ');
 
+            if (isNaN(nominal)) {
+                await sock.sendMessage(from, { text: '⚠️ Nominal di bagian akhir harus berupa angka, azizz! Contoh:\n`.catat sabun mandi 50000`' });
+                return;
+            }
+
+            const tanggal = new Date().toLocaleDateString('id-ID');
             db.transactions.push({ nominal, keterangan, tanggal });
 
             const sisaSaldoAft = saldoSaatIni - nominal;
 
             await sock.sendMessage(from, { 
                 text: `✅ *Pengeluaran Disimpan, azizz!*\n\n` +
-                      `💸 Terpakai: Rp ${nominal.toLocaleString('id-ID')}\n` +
                       `🏷️ Keterangan: ${keterangan}\n` +
+                      `💸 Terpakai: Rp ${nominal.toLocaleString('id-ID')}\n` +
                       `💰 Sisa Saldo Utama: Rp ${sisaSaldoAft.toLocaleString('id-ID')}`
             });
         }
@@ -221,7 +227,7 @@ async function startBot() {
             await sock.sendMessage(from, { text: textHistory });
         }
 
-        // 7. CARI TRANSAKSI (.cari makan)
+        // 7. CARI TRANSAKSI (.cari sabun)
         else if (cleanText.startsWith('.cari')) {
             const keyword = cleanText.replace('.cari', '').trim().toLowerCase();
             if (!keyword) {
@@ -349,7 +355,7 @@ async function startBot() {
                     });
                 } else {
                     await sock.sendMessage(from, {
-                        text: `⚠️ *AI Gagal Membaca Nominal*, azizz.\nRespon AI: ${aiResult}\nCoba catat manual pakai \`.catat [jumlah] [ket]\` ya!`
+                        text: `⚠️ *AI Gagal Membaca Nominal*, azizz.\nRespon AI: ${aiResult}\nCoba catat manual pakai \`.catat [keterangan] [jumlah]\` ya!`
                     });
                 }
             } else {
