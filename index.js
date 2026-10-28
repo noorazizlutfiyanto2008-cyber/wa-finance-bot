@@ -3,10 +3,9 @@ const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 const express = require('express');
-const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
 
-// Inisialisasi Gemini API menggunakan Environment Variable
+// Inisialisasi Gemini API
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // ==========================================
@@ -24,31 +23,56 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 2. DATABASE PERMANEN (JSON FILE STORAGE)
+// 2. DATABASE CLOUD PERMANEN (JSONBIN.IO)
 // ==========================================
-const DB_FILE = './database.json';
+const BIN_ID = process.env.JSONBIN_BIN_ID;
+const API_KEY = process.env.JSONBIN_KEY;
 
-function loadDB() {
+// Fungsi membaca database dari JSONbin Cloud
+async function loadDB() {
     try {
-        if (fs.existsSync(DB_FILE)) {
-            const data = fs.readFileSync(DB_FILE, 'utf8');
-            return JSON.parse(data);
+        if (!BIN_ID || !API_KEY) {
+            console.log('⚠️ Env JSONBIN belum diset, menggunakan memori sementara.');
+            return {};
+        }
+        const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
+            method: 'GET',
+            headers: { 'X-Master-Key': API_KEY }
+        });
+        if (res.ok) {
+            const result = await res.json();
+            return result.record || {};
         }
     } catch (error) {
-        console.error('⚠️ Gagal membaca database:', error);
+        console.error('⚠️ Gagal mengambil data dari Cloud Database:', error);
     }
     return {};
 }
 
-function saveDB(data) {
+// Fungsi menyimpan database ke JSONbin Cloud
+async function saveDB(data) {
     try {
-        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+        if (!BIN_ID || !API_KEY) return;
+        await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Master-Key': API_KEY
+            },
+            body: JSON.stringify(data)
+        });
     } catch (error) {
-        console.error('⚠️ Gagal menyimpan database:', error);
+        console.error('⚠️ Gagal menyimpan data ke Cloud Database:', error);
     }
 }
 
-let userDB = loadDB();
+let userDB = {};
+
+// Initial load database saat bot start
+(async () => {
+    userDB = await loadDB();
+    console.log('☁️ Database Cloud JSONbin berhasil dimuat!');
+})();
 
 // ==========================================
 // 3. SETUP WHATSAPP SOCKET (BAILEYS)
@@ -114,14 +138,34 @@ async function startBot() {
                       `📋 *Daftar Perintah:*\n` +
                       `• ➕ \`.rc [jumlah] [keterangan]\` - Tambah saldo / pemasukan\n` +
                       `• 📝 \`.catat [keterangan] [jumlah]\` - Catat pengeluaran\n` +
-                      `• 🎯 \`.budget\` - Hitung otomatis alokasi 5 pos keuangan\n` +
+                      `• 🎯 \`.budget\` - Hitung alokasi 5 pos keuangan\n` +
                       `• 💰 \`.saldo\` - Cek sisa saldo & total alokasi\n` +
-                      `• 📜 \`.history\` - Lihat riwayat transaksi terakhir\n` +
+                      `• 📜 \`.history\` - Lihat riwayat transaksi\n` +
                       `• 🔍 \`.cari [kata kunci]\` - Cari transaksi\n` +
                       `• ↩️ \`.undo\` - Hapus pengeluaran terakhir\n` +
                       `• 📊 \`.rekap\` - Rekap total keuangan\n` +
+                      `• 🏓 \`.ping\` - Cek respons & latensi server\n` +
                       `• 🧹 \`.reset\` - Hapus semua data\n` +
                       `• 📷 *Kirim Foto Struk* - Deteksi otomatis via Gemini AI`
+            });
+        }
+
+        // PING (.ping)
+        else if (cleanText === '.ping') {
+            const startPing = Date.now();
+            await sock.sendMessage(from, { text: '🏓 *Pinging server...*' });
+            const latency = Date.now() - startPing;
+
+            let statusNoc = '🟢 *NORMAL (Optimal)*';
+            if (latency > 300) statusNoc = '🟡 *WARNING (Agak Padat)*';
+            if (latency > 600) statusNoc = '🔴 *CRITICAL (High Latency)*';
+
+            await sock.sendMessage(from, { 
+                text: `🏓 *PONG! BOT STATUS MONITOR* 🖥️\n\n` +
+                      `⏱️ Response Time: *${latency} ms*\n` +
+                      `📊 Status Infrastruktur: ${statusNoc}\n` +
+                      `☁️ Storage: *Cloud DB Active*\n` +
+                      `🚀 Uptime: *Stable 24/7*`
             });
         }
 
@@ -138,7 +182,7 @@ async function startBot() {
             const tanggal = new Date().toLocaleDateString('id-ID');
 
             db.incomes.push({ nominal, keterangan, tanggal });
-            saveDB(userDB); // Simpan permanen ke file JSON
+            await saveDB(userDB); // Simpan ke Cloud Database
 
             const newTotalInc = db.incomes.reduce((acc, curr) => acc + curr.nominal, 0);
             const newSaldo = newTotalInc - totalPengeluaran;
@@ -161,7 +205,6 @@ async function startBot() {
                 return;
             }
 
-            // Alokasi Persentase
             const biayaHidup = Math.floor(saldoSaatIni * 0.30);
             const tabungan = Math.floor(saldoSaatIni * 0.25);
             const investasi = Math.floor(saldoSaatIni * 0.25);
@@ -175,7 +218,7 @@ async function startBot() {
                       `🛍️ *Biaya Hidup (30%)*: Rp ${biayaHidup.toLocaleString('id-ID')}\n` +
                       `   └ Operasional, mandi, facewash, deodoran, dll.\n\n` +
                       `🏦 *Tabungan (25%)*: Rp ${tabungan.toLocaleString('id-ID')}\n` +
-                      `   └ Fleksibel/Buffer jika pos lain habis (wajib catat).\n\n` +
+                      `   └ Fleksibel/Buffer jika pos lain habis.\n\n` +
                       `📈 *Investasi (25%)*: Rp ${investasi.toLocaleString('id-ID')}\n` +
                       `   └ 🔒 *LOCKED (Haram Disentuh)* untuk aset masa depan.\n\n` +
                       `🆘 *Uang Darurat (10%)*: Rp ${uangDarurat.toLocaleString('id-ID')}\n` +
@@ -215,7 +258,7 @@ async function startBot() {
 
             const tanggal = new Date().toLocaleDateString('id-ID');
             db.transactions.push({ nominal, keterangan, tanggal });
-            saveDB(userDB); // Simpan permanen ke file JSON
+            await saveDB(userDB); // Simpan ke Cloud Database
 
             const sisaSaldoAft = saldoSaatIni - nominal;
 
@@ -292,7 +335,7 @@ async function startBot() {
                 return;
             }
             const removed = db.transactions.pop();
-            saveDB(userDB); // Simpan perubahan permanen
+            await saveDB(userDB);
 
             await sock.sendMessage(from, { 
                 text: `↩️ *Pengeluaran Terakhir Dihapus (Undo):*\n` +
@@ -301,7 +344,7 @@ async function startBot() {
         }
 
         // 9. REKAPITULASI (.rekap / .report)
-        else if (cleanText === '.rekap' || cleanTest === '.report') {
+        else if (cleanText === '.rekap' || cleanText === '.report') {
             await sock.sendMessage(from, { 
                 text: `📊 *REKAPITULASI KEUANGAN AZIZZ*\n\n` +
                       `🟢 Total Pemasukan: Rp ${totalPemasukan.toLocaleString('id-ID')}\n` +
@@ -315,7 +358,7 @@ async function startBot() {
         else if (cleanText === '.reset') {
             db.transactions = [];
             db.incomes = [];
-            saveDB(userDB); // Simpan status kosong permanen
+            await saveDB(userDB);
 
             await sock.sendMessage(from, { text: `🧹 *Data Berhasil Direset, azizz!* Semua saldo dan riwayat kembali ke nol.` });
         }
@@ -377,7 +420,7 @@ async function startBot() {
                 if (nominal > 0) {
                     const tanggal = new Date().toLocaleDateString('id-ID');
                     db.transactions.push({ nominal, keterangan, tanggal });
-                    saveDB(userDB); // Simpan permanen ke file JSON
+                    await saveDB(userDB);
 
                     await sock.sendMessage(from, {
                         text: `✅ *Struk Berhasil Dibaca AI (Masuk Pengeluaran)*:\n\n` +
